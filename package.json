@@ -1,0 +1,23 @@
+{
+  "name": "discovery",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone crawler that discovers listings on external sites and reports them to the Ticketli admin API",
+  "scripts": {
+    "start": "tsx src/runner.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "playwright": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "latest",
+    "vitest": "^4.1.10"
+  }
+}
