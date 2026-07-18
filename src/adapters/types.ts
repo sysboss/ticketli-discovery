@@ -6,11 +6,16 @@ export interface DiscoveredListingDraft {
   title: string;
   description?: string | null;
   price?: number | null;
+  original_price?: number | null;
   currency?: string;
   location_label?: string | null;
   seller_username?: string | null;
+  seller_phone_e164?: string | null;
+  preferred_contact_channel?: string | null;
   published_at?: string | null;
   category: string;
+  /** The active category's detail object (e.g. hotel: {property_name, city, ...}), or null if none was extracted. */
+  category_details?: Record<string, unknown> | null;
   coverImageUrl?: string | null;
 }
 

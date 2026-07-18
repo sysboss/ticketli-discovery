@@ -31,11 +31,15 @@ export interface DiscoveredListingInput {
   title: string;
   description?: string | null;
   price?: number | null;
+  original_price?: number | null;
   currency?: string;
   location_label?: string | null;
   seller_username?: string | null;
+  seller_phone_e164?: string | null;
+  preferred_contact_channel?: string | null;
   published_at?: string | null;
   category: string;
+  category_details?: Record<string, unknown> | null;
 }
 
 export interface DiscoveredListingResult extends DiscoveredListingInput {

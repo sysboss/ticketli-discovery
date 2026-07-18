@@ -25,6 +25,7 @@ npm test
 - Keep environment access centralized in `src/config.ts`.
 - Keep backend route usage centralized in `src/apiClient.ts` unless there is a strong reason to change the API abstraction.
 - Do not commit secrets. Use `.env` locally and document new variables in `.env.example` and `README.md`.
+- Keep OpenAI usage behind injectable wrappers so unit tests do not call the live API.
 
 ## Adapter Guidance
 
@@ -33,6 +34,7 @@ npm test
 - Put source-specific browser automation and parsing under `src/adapters/<sourceName>/`.
 - Add tests for parsing logic when HTML assumptions are introduced or changed.
 - Current registered source: `nitkati_group`.
+- `nitkati_group` intentionally keeps category-page link discovery static to reduce model tokens; only detail-page field extraction should call OpenAI.
 
 ## Verification Checklist
 
@@ -46,7 +48,7 @@ For documentation-only changes, review rendered Markdown and ensure commands, en
 
 ## Operational Notes
 
-- The crawler reads `BACKEND_BASE_URL`, `DISCOVERY_ADMIN_TOKEN`, and `DISCOVERY_BATCH_SIZE` from the environment.
+- The crawler reads `BACKEND_BASE_URL`, `DISCOVERY_ADMIN_TOKEN`, `DISCOVERY_BATCH_SIZE`, `OPENAI_API_KEY`, `OPENAI_MODEL`, and `LOG_LEVEL` from the environment.
 - `DISCOVERY_ADMIN_TOKEN` should be a dedicated service/admin token, not a human admin's personal token.
 - Playwright launches Chromium during crawler runs, so browser availability can affect local execution.
 - Discovery should remain idempotent: repeated runs must safely update existing backend records.

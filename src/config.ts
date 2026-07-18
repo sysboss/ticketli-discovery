@@ -1,7 +1,12 @@
+import "dotenv/config";
+
 export interface DiscoveryConfig {
   backendBaseUrl: string;
   adminToken: string;
   batchSize: number;
+  openAiApiKey: string;
+  openAiModel: string;
+  logLevel: "debug" | "info";
 }
 
 function requireEnv(name: string): string {
@@ -16,5 +21,8 @@ export function loadConfig(): DiscoveryConfig {
     backendBaseUrl: requireEnv("BACKEND_BASE_URL").replace(/\/$/, ""),
     adminToken: requireEnv("DISCOVERY_ADMIN_TOKEN"),
     batchSize: Number.isFinite(batchSize) && batchSize > 0 ? batchSize : 20,
+    openAiApiKey: requireEnv("OPENAI_API_KEY"),
+    openAiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+    logLevel: process.env.LOG_LEVEL === "debug" ? "debug" : "info",
   };
 }

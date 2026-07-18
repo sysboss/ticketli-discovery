@@ -45,76 +45,150 @@ export function parseCategoryPageLinks(html: string, baseUrl: string): string[] 
   return Array.from(links);
 }
 
-const PRICE_PATTERN = /₪\s?([\d,]+)/g;
-// Anchored to a whole (short) leaf element's text -- see findLocationLabel.
-// Matching this against a large concatenated block of body text instead would
-// let the greedy character classes backtrack across unrelated sentences.
-const LOCATION_LEAF_PATTERN = /^([^·]{1,40})·\s*([^·]{1,40})$/;
-
-function extractPrices(text: string): number[] {
-  const prices: number[] = [];
-  for (const match of text.matchAll(PRICE_PATTERN)) {
-    const value = Number(match[1].replaceAll(",", ""));
-    if (Number.isFinite(value)) prices.push(value);
-  }
-  return prices;
+export interface ListingDetailInput {
+  html: string;
+  url: string;
+  category: string;
 }
 
-function firstNonEmptyText($: cheerio.CheerioAPI, selectors: string[]): string | null {
-  for (const selector of selectors) {
-    const text = $(selector).first().text().trim();
-    if (text) return text;
-  }
-  return null;
+export interface ListingDetailModelOutput {
+  title: string | null;
+  description: string | null;
+  price: number | null;
+  original_price: number | null;
+  currency: string | null;
+  location_label: string | null;
+  seller_username: string | null;
+  seller_phone_e164: string | null;
+  preferred_contact_channel: string | null;
+  published_at: string | null;
+  cover_image_url: string | null;
+  category_details_summary: string | null;
+  category_details: unknown;
 }
 
-// Looks for a single leaf element (no element children) whose own text is
-// exactly "City · Country", rather than regex-matching the whole page's
-// concatenated text -- the latter lets a generic character class backtrack
-// across unrelated sentences and grab garbage.
-function findLocationLabel($: cheerio.CheerioAPI): string | null {
-  let found: string | null = null;
-  $("body *").each((_, element) => {
-    if (found) return;
-    const node = $(element);
-    if (node.children().length > 0) return;
-    const text = node.text().trim();
-    if (text.length === 0 || text.length > 60) return;
-    const match = text.match(LOCATION_LEAF_PATTERN);
-    if (match) found = `${match[1].trim()} · ${match[2].trim()}`;
-  });
-  return found;
+export interface ListingDetailExtractor {
+  extract(input: ListingDetailInput): Promise<ListingDetailModelOutput>;
 }
 
-export function parseListingDetail(html: string, context: { url: string; category: string }): DiscoveredListingDraft {
+type CheerioElementInput = Parameters<cheerio.CheerioAPI>[0];
+
+const TOKEN_HEAVY_SELECTORS = "script, style, noscript, template, svg, header, footer, nav, aside";
+const NITKATI_DETAIL_MAIN_SELECTOR = 'main[class~="container"][class~="py-6"][class~="flex-1"]';
+const LISTING_CARD_SELECTORS = ["article", "main", '[class*="listing" i]', '[class*="detail" i]', '[class*="card" i]', "body"];
+const PRICE_MARKER_PATTERN = /₪|\bILS\b|\bNIS\b|מחיר|price/i;
+
+function compactHtml(html: string): string {
   const $ = cheerio.load(html);
-  const bodyText = $("body").text().replace(/\s+/g, " ").trim();
+  $(TOKEN_HEAVY_SELECTORS).remove();
+  $("*")
+    .contents()
+    .each((_, node) => {
+      if (node.type === "comment") $(node).remove();
+    });
+  $("*").each((_, element) => {
+    const node = $(element);
+    const attributes = node.attr() ?? {};
+    for (const attribute of Object.keys(attributes)) {
+      if (!["href", "src", "alt"].includes(attribute)) node.removeAttr(attribute);
+    }
+  });
+  return $.root().html()?.replace(/\s+/g, " ").replace(/>\s+</g, "><").trim() ?? "";
+}
 
-  const titleFromTag = $("title").text().split(/[|–-]/)[0]?.trim() || null;
-  const title = firstNonEmptyText($, ["h1", '[class*="title" i]']) ?? titleFromTag ?? context.url;
+function scoreListingCandidate($: cheerio.CheerioAPI, element: CheerioElementInput): number {
+  const node = $(element);
+  const text = node.text().replace(/\s+/g, " ").trim();
+  if (text.length < 20) return 0;
+  const htmlLength = node.html()?.length ?? 0;
+  return text.length + (node.find("h1").length > 0 ? 500 : 0) + (PRICE_MARKER_PATTERN.test(text) ? 350 : 0) + (node.find("img[src]").length > 0 ? 100 : 0) - htmlLength / 100;
+}
 
-  const description = firstNonEmptyText($, ['[class*="descr" i]', "p"]);
+export function extractListingCardHtml(html: string): string {
+  const $ = cheerio.load(html);
+  $(TOKEN_HEAVY_SELECTORS).remove();
 
-  const prices = extractPrices(bodyText);
-  const price = prices.length > 0 ? Math.min(...prices) : null;
+  const nitkatiDetailMain = $(NITKATI_DETAIL_MAIN_SELECTOR).first();
+  if (nitkatiDetailMain.length > 0) return compactHtml($.html(nitkatiDetailMain));
 
-  const locationLabel = findLocationLabel($);
+  let bestHtml: string | null = null;
+  let bestScore = 0;
+  for (const selector of LISTING_CARD_SELECTORS) {
+    $(selector).each((_, element) => {
+      const score = scoreListingCandidate($, element);
+      if (score <= bestScore) return;
+      bestScore = score;
+      bestHtml = $.html(element);
+    });
+  }
 
-  const sellerUsername = firstNonEmptyText($, ['[class*="seller" i]', '[class*="contact" i]', '[class*="poster" i]']);
+  return compactHtml(bestHtml ?? $("body").html() ?? html);
+}
 
-  const coverImage = $('img[src]:not([src*="icon"]):not([src*="logo"])').first().attr("src") ?? null;
-  const coverImageUrl = coverImage ? new URL(coverImage, context.url).toString() : null;
+function normalizePrice(price: number | null): number | null {
+  return typeof price === "number" && Number.isFinite(price) && price > 0 ? price : null;
+}
+
+function normalizeText(value: string | null): string | null {
+  const trimmed = value?.replace(/\s+/g, " ").trim();
+  return trimmed ? trimmed : null;
+}
+
+function absoluteUrl(value: string | null, baseUrl: string): string | null {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  try {
+    return new URL(normalized, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function mergeDescription(description: string | null, categoryDetailsSummary: string | null): string | null {
+  const normalizedDescription = normalizeText(description);
+  const normalizedDetails = normalizeText(categoryDetailsSummary);
+  if (!normalizedDetails) return normalizedDescription;
+  if (!normalizedDescription) return normalizedDetails;
+  if (normalizedDescription.includes(normalizedDetails)) return normalizedDescription;
+  return `${normalizedDescription}\n\nפרטי קטגוריה: ${normalizedDetails}`;
+}
+
+function normalizePhone(value: string | null): string | null {
+  const digits = value?.replace(/\D/g, "") ?? "";
+  if (!digits) return null;
+  if (digits.startsWith("972")) return `+${digits}`;
+  if (digits.startsWith("0")) return `+972${digits.slice(1)}`;
+  return value?.startsWith("+") ? `+${digits}` : null;
+}
+
+// `extracted.category_details` is an object keyed by every category (flight, event, ...),
+// with only the requested category's entry populated and the rest null -- pull out just
+// that one entry so we store/send only what's relevant to this listing's category.
+function extractCategoryDetails(categoryDetails: unknown, category: string): Record<string, unknown> | null {
+  if (typeof categoryDetails !== "object" || categoryDetails === null) return null;
+  const details = (categoryDetails as Record<string, unknown>)[category];
+  if (typeof details !== "object" || details === null) return null;
+  return details as Record<string, unknown>;
+}
+
+export async function parseListingDetail(html: string, context: { url: string; category: string }, extractor: ListingDetailExtractor): Promise<DiscoveredListingDraft> {
+  const listingCardHtml = extractListingCardHtml(html);
+  const extracted = await extractor.extract({ html: listingCardHtml, url: context.url, category: context.category });
 
   return {
     external_url: context.url,
-    title,
-    description,
-    price,
-    currency: "ILS",
-    location_label: locationLabel,
-    seller_username: sellerUsername,
-    published_at: null,
+    title: normalizeText(extracted.title) ?? context.url,
+    description: mergeDescription(extracted.description, extracted.category_details_summary),
+    price: normalizePrice(extracted.price),
+    original_price: normalizePrice(extracted.original_price),
+    currency: normalizeText(extracted.currency) ?? "ILS",
+    location_label: normalizeText(extracted.location_label),
+    seller_username: normalizeText(extracted.seller_username),
+    seller_phone_e164: normalizePhone(extracted.seller_phone_e164),
+    preferred_contact_channel: normalizeText(extracted.preferred_contact_channel),
+    published_at: normalizeText(extracted.published_at),
     category: context.category,
-    coverImageUrl,
+    category_details: extractCategoryDetails(extracted.category_details, context.category),
+    coverImageUrl: absoluteUrl(extracted.cover_image_url, context.url),
   };
 }
